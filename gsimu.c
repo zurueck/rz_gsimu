@@ -1,6 +1,8 @@
 /*
-    1. create timerStart - 1 time intt stop
-    2. create setGPIO
+    1. implement timerStart - autoreload, a perios = baurdrate/4, intt enable
+       1/115200 = 8.68us, 8.68/4 = 2.17us
+       (for 12M clock, it will be 26 clocks)
+    2. implement setGPIO
     3. create struct GSU_ctrler
     4. put callback function into timer isr
     
@@ -66,25 +68,26 @@ unsigned int g_gsu_timeout_Flag;
 void gsu_isr_callback() {
     unsigned char bit;
     unsigned char tmp;
+    static int preCnt = 0;
 
-    if (s_gsu->nowStage == GSU_TX) {
+    preCnt++;
+    if (preCnt % 4 == 2) {
         s_gsu->cnt++;
+    }
+    if (s_gsu->nowStage == GSU_TX) {
         if (s_gsu->cnt >= 1 && s_gsu->cnt <= 8) {
             bit = s_gsu->txData && 0x01;
             s_gsu->txData = s_gsu->txData >> 1;
             s_gsu->set_txio(bit);
-            s_gsu->timerStart();
         } else if (s_gsu->cnt == 9) {
             /* stop bit */
             s_gsu->set_txio(1);
-            s_gsu->timerStart();
         } else if (s_gsu->cnt >= 10) {
             s_gsu->cnt = 0 ;
             s_gsu->nowStage = GSU_IDLE;
             s_gsu->txDoneFlag = 1;
         }
     } else if (s_gsu->nowStage == GSU_RX) {
-        s_gsu->cnt++;
         if (s_gsu->cnt >= 1 && s_gsu->cnt <= 8) {
             tmp = tmp << 1;
             if (s_gsu->get_rxio()) {
@@ -92,10 +95,8 @@ void gsu_isr_callback() {
             } else {
                 tmp &= ~1;
             }
-            s_gsu->timerStart();
         } else if (s_gsu->cnt == 9) {
             /* stop bit */
-            s_gsu->timerStart();
         } else if (s_gsu->cnt >= 10) {
             s_gsu->cnt = 0 ;
             s_gsu->rxData = tmp;
@@ -103,13 +104,12 @@ void gsu_isr_callback() {
             s_gsu->rxDoneFlag = 1;
         }
     }
-}//isr call back
+} //isr call back
 
 //public
 void gsu_rxByte() {
-    //set cnt = 0;
     s_gsu->rxDoneFlag = 0;
-    s_gsu->timerStart();
+    s_gsu->nowStage = GSU_RX;
     while(s_gsu->rxDoneFlag == 0 && g_gsu_timeout_Flag == 0);
 }
 
@@ -118,11 +118,10 @@ void gsu_rxByte() {
 void gsu_txbyte(unsigned char data) 
 {
     // start bit
-    s_gsu->nowStage = GSU_TX;
     s_gsu->txData = data;
     s_gsu->txDoneFlag = 0;
     s_gsu->set_txio(0);
-    s_gsu->timerStart();
+    s_gsu->nowStage = GSU_TX;
     while(s_gsu->txDoneFlag == 0 && g_gsu_timeout_Flag == 0);
 }
 
@@ -131,6 +130,8 @@ void GSU_ctrler_link(struct GSU_ctrler *ctrler) {
     s_gsu->nowStage = GSU_IDLE;
     ctrler->nowStage = GSU_IDLE;
     s_gsu = ctrler;
+
+    s_gsu->timerStart();
 }
 
 
